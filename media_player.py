@@ -57,3 +57,25 @@ class MediaPlayer:
             return mdp.get_media().get_mrl().split('/')[-1]
         return ""
 
+    def duration(self) -> int:
+        """Return duration in ms of current track"""
+        mlp = self.player.get_media_player()
+        if mlp:
+            d = mlp.get_length()
+            return d if d > 0 else 0
+        return 0
+
+    def position(self) -> int:
+        """Return current position in ms of current track"""
+        mlp = self.player.get_media_player()
+        if mlp:
+            p = mlp.get_time()
+            return p if p > 0 else 0
+        return 0
+
+    def set_position(self, ms: int):
+        """Seek to specific position (ms)"""
+        mlp = self.player.get_media_player()
+        if mlp:
+            mlp.set_time(ms)
+
