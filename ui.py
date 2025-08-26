@@ -84,7 +84,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Track time label (e.g., 01:23 / 04:56)
         self.time_lbl = QtWidgets.QLabel("00:00 / 00:00")
         self.time_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        self.time_lbl.setStyleSheet("font-size:14px; color:#bbb;")
+        self.time_lbl.setStyleSheet("font-size:20px; color:#bbb;")
         side_layout.addWidget(self.time_lbl)
 
         # Playback buttons (optional fallback)
@@ -109,16 +109,27 @@ class MainWindow(QtWidgets.QMainWindow):
         side_layout.addLayout(btn_layout)
 
         # Hook up playback buttons
-        self.btn_play.clicked.connect(self.player.play_pause)
-        self.btn_next.clicked.connect(self.player.next)
-        self.btn_prev.clicked.connect(self.player.previous)
+        self.btn_play.clicked.connect(self._btn_play_pause)
+        self.btn_next.clicked.connect(self._btn_next)
+        self.btn_prev.clicked.connect(self._btn_previous)
 
-        # Volume slider
-        self.vol_slider = QtWidgets.QSlider(QtCore.Qt.Vertical)
+        # Volume layout with label + percentage
+        vol_layout = QtWidgets.QHBoxLayout()
+        self.vol_lbl = QtWidgets.QLabel("Volume")
+        self.vol_lbl.setStyleSheet("font-size:20px; color:#ccc;")
+        self.vol_val_lbl = QtWidgets.QLabel("50%")   # show current %
+        self.vol_val_lbl.setStyleSheet("font-size:20px; color:#00bcd4;")
+        vol_layout.addWidget(self.vol_lbl)
+        vol_layout.addStretch(1)
+        vol_layout.addWidget(self.vol_val_lbl)
+        side_layout.addLayout(vol_layout)
+
+        # Volume slider (horizontal, grey/blue)
+        self.vol_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(50)
         self.vol_slider.valueChanged.connect(self._on_slider)
-        side_layout.addWidget(self.vol_slider) 
+        side_layout.addWidget(self.vol_slider)
         
         # Instructions
         help_text = (
@@ -129,7 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "👌 Pinch + Move Up/Down → Volume"
         )
         self.help_lbl = QtWidgets.QLabel(help_text)
-        self.help_lbl.setStyleSheet("font-size:20px; color:#ccc;")
+        self.help_lbl.setStyleSheet("font-size:24px; color:#ccc;")
         side_layout.addWidget(self.help_lbl)
 
         side_layout.addStretch(1)
@@ -154,23 +165,23 @@ class MainWindow(QtWidgets.QMainWindow):
         # Global stylesheet
         self.setStyleSheet("""
             QWidget { background-color: #1e1e1e; color: #f0f0f0; font-family: 'Segoe UI'; font-size: 16px; }
-            QLabel#titleLabel { font-size: 22px; font-weight: bold; color: #00bcd4; }
-            QLabel#statusLabel { font-size: 18px; color: #ff9800; }
-            QLabel#gestureLabel { font-size: 18px; color: #8bc34a; }
+            QLabel#titleLabel { font-size: 24px; font-weight: bold; color: #00bcd4; }
+            QLabel#statusLabel { font-size: 20px; color: #ff9800; }
+            QLabel#gestureLabel { font-size: 20px; color: #8bc34a; }
             
-            QSlider::groove:vertical {
-                background: #00bcd4;  
-                width: 8px;
+            QSlider::groove:horizontal {
+                background: #00bcd4;   /* track = blue */
+                height: 8px;
                 border-radius: 4px;
             }
-            QSlider::handle:vertical {
-                background: #666;     
-                height: 20px;
-                margin: -2px;
+            QSlider::handle:horizontal {
+                background: #666;      /* knob = grey */
+                width: 20px;
+                margin: -2px 0;
                 border-radius: 6px;
             }
-            QSlider::add-page:vertical { background: #00bcd4; }  /* 🔹 lower side */
-            QSlider::sub-page:vertical { background: #666; }     /* 🔹 upper side */
+            QSlider::add-page:horizontal { background: #666; }  /* left side = blue */
+            QSlider::sub-page:horizontal { background: #00bcd4; }     /* right side = grey */
         """)
 
     # --- UI helpers ---
@@ -189,7 +200,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_slider(self):
         self.cur_volume = self.vol_slider.value()
         self.player.set_volume(self.cur_volume)
-        self.status_lbl.setText(f"Status: Volume {self.cur_volume}")
+        self.vol_val_lbl.setText(f"{self.cur_volume}%") # Update label
 
     def update_progress(self):
         duration = self.player.duration()
@@ -214,6 +225,21 @@ class MainWindow(QtWidgets.QMainWindow):
         new_pos = self.progress.value()
         if duration > 0:
             self.player.set_position(new_pos)
+
+    def _btn_play_pause(self):
+        self.player.play_pause()
+        self.title_lbl.setText("Title: " + urllib.parse.unquote(os.path.basename(self.player.title())))
+        self.status_lbl.setText("Status: Play/Pause")
+
+    def _btn_next(self):
+        self.player.next()
+        self.title_lbl.setText("Title: " + urllib.parse.unquote(os.path.basename(self.player.title())))
+        self.status_lbl.setText("Status: Next")
+
+    def _btn_previous(self):
+        self.player.previous()
+        self.title_lbl.setText("Title: " + urllib.parse.unquote(os.path.basename(self.player.title())))
+        self.status_lbl.setText("Status: Previous")
 
     @QtCore.pyqtSlot(np.ndarray)
     def update_frame(self, frame: np.ndarray):
@@ -259,7 +285,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif name == 'volume_delta' and event.data is not None:
             # Convert dy (pixels) to volume change
             dy = float(event.data)
-            dv = (dy / 100.0) * VOL_PER_100PX
+            dv = max(-3, min(3, (dy / 100.0) * VOL_PER_100PX))  # Cap at ±2 volume units per gesture
+
             # Smooth
             new_vol = self.cur_volume + dv
             self.cur_volume = max(0, min(100, int(round((1-PINCH_SMOOTHING)*new_vol + PINCH_SMOOTHING*self.cur_volume))))
@@ -267,7 +294,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.vol_slider.blockSignals(True)
             self.vol_slider.setValue(self.cur_volume)
             self.vol_slider.blockSignals(False)
-            self.status_lbl.setText(f"Status: Volume {self.cur_volume}")
+            self.vol_val_lbl.setText(f"{self.cur_volume}%")
 
     def closeEvent(self, e: QtGui.QCloseEvent):
         self.thread.stop()

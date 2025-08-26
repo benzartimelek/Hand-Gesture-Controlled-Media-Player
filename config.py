@@ -14,7 +14,7 @@ SWIPE_MIN_PIXELS = 80          # min wrist delta X for swipe
 SWIPE_COOLDOWN_S = 0.7
 PALM_COOLDOWN_S = 0.8
 PINCH_SMOOTHING = 0.8           # EMA smoothing for volume changes
-VOL_PER_100PX = 10              # change in volume (0-100) per 100px vertical movement while pinching
+VOL_PER_100PX = 10           # change in volume (0-100) per 100px vertical movement while pinching
 
 # UI
 FONT = cv2.FONT_HERSHEY_SIMPLEX
