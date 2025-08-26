@@ -40,6 +40,10 @@ class GestureDetector:
         self.pinch_ref_y = None  
         self.pinch_vol_ref = None
         self.vol_ema = None
+        self.pinch_history: Deque[Tuple[float, float]] = deque(maxlen=5)  # (y_pos, timestamp)
+        self.last_volume_change_time = 0.0
+        self.volume_change_cooldown = 0.05  # 50ms between volume changes
+        self.movement_threshold = 3  # minimum pixels to trigger volume change
 
     # Utility: convert normalized landmark to pixel coords
     def _np2px(self, lm) -> Tuple[int, int]:
@@ -100,12 +104,33 @@ class GestureDetector:
         x0, _, _ = self.wrist_history[0]
         x1, _, _ = self.wrist_history[-1]
         return abs(x1 - x0)
+    
+    def _has_significant_movement(self, current_y: float) -> bool:
+        """Check if there's been significant vertical movement since last volume change"""
+        if not self.pinch_history:
+            return False
+        
+        # Get recent positions (last 3 frames)
+        recent_positions = [pos for pos, _ in list(self.pinch_history)[-3:]]
+        if len(recent_positions) < 2:
+            return False
+        
+        # Check if movement is consistent in one direction and exceeds threshold
+        movements = [recent_positions[i+1] - recent_positions[i] for i in range(len(recent_positions)-1)]
+        
+        # All movements should be in same direction and total movement should exceed threshold
+        if all(m > 0 for m in movements) or all(m < 0 for m in movements):
+            total_movement = abs(sum(movements))
+            return total_movement > self.movement_threshold
+        
+        return False
 
     def process(self, frame_bgr: np.ndarray) -> Tuple[np.ndarray, Optional[GestureEvent]]:
         img_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         res = self.hands.process(img_rgb)
         event: Optional[GestureEvent] = None
         annotated = frame_bgr
+        current_time = time.time()
 
         if res.multi_hand_landmarks:
             hand_lms = res.multi_hand_landmarks[0]
@@ -121,12 +146,12 @@ class GestureDetector:
             lms = hand_lms.landmark
             # Update history for swipe
             wx, wy = self._np2px(lms[0])
-            self.wrist_history.append((wx, wy, time.time()))
+            self.wrist_history.append((wx, wy, current_time))
             
             # Pointing detection (uses cooldown)
             pointing = self._detect_pointing(lms)
-            if pointing and (time.time() - self.last_point_time) > self.point_cooldown:
-                self.last_point_time = time.time()
+            if pointing and (current_time - self.last_point_time) > self.point_cooldown:
+                self.last_point_time = current_time
                 if pointing == "point_right":
                     event = GestureEvent("next")
                 else:
@@ -136,34 +161,55 @@ class GestureDetector:
             fingers = self._count_fingers(lms)
             horiz_motion = self._horizontal_motion()
             motion_thresh = max(30, int(self.frame_w * 0.03))  # adapt to resolution
-            if fingers >= 4 and horiz_motion < motion_thresh and (time.time() - self.last_palm_time) > PALM_COOLDOWN_S:
+            if fingers >= 4 and horiz_motion < motion_thresh and (current_time - self.last_palm_time) > PALM_COOLDOWN_S:
                 event = GestureEvent('toggle_play')
-                self.last_palm_time = time.time()
+                self.last_palm_time = current_time
 
             # Pinch mode for volume
             is_pinch = self._detect_pinch(lms)
+            idx_y = self._np2px(lms[8])[1] # Y position of index finger
             
             if is_pinch and not self.pinch_mode:
                 self.pinch_mode = True
-                self.pinch_ref_y = self._np2px(lms[8])[1]  # Y position of index finger
+                self.pinch_ref_y = idx_y  
+                self.pinch_history.clear()
+                self.pinch_history.append((idx_y, current_time))
                 self.pinch_vol_ref = None  # set by caller when first volume seen
                 cv2.putText(annotated, 'VOLUME MODE', (20, 60), FONT, 1.0, (0, 255, 255), 2)
+            
             elif not is_pinch and self.pinch_mode:
                 self.pinch_mode = False
                 self.pinch_ref_y = None
                 self.pinch_vol_ref = None
+                self.pinch_history.clear()
 
             if self.pinch_mode and self.pinch_ref_y is not None:
-                idx_y = self._np2px(lms[8])[1]
-                dy = (self.pinch_ref_y - idx_y)  # up is positive (screen coordinates)
-                event = GestureEvent('volume_delta', data=dy)
-                cv2.putText(annotated, f'ΔV raw={dy:.0f}px', (20, 90), FONT, 0.7, (0, 255, 255), 2)
+                # Add current position to history
+                self.pinch_history.append((idx_y, current_time))
+
+                # Only process volume change if enough time has passed and there's significant movement
+                if (current_time - self.last_volume_change_time > self.volume_change_cooldown and 
+                    self._has_significant_movement(idx_y)):
+                    
+                    dy = self.pinch_ref_y - idx_y  # up is positive (screen coordinates)
+                    
+                    # Only send volume change if movement is significant
+                    if abs(dy) > self.movement_threshold:
+                        event = GestureEvent('volume_delta', data=dy)
+                        self.last_volume_change_time = current_time
+                        # Update reference point to current position for next change
+                        self.pinch_ref_y = idx_y
+                        cv2.putText(annotated, f'ΔV={dy:.0f}px', (20, 90), FONT, 0.7, (0, 255, 255), 2)
+                
+                # Always show pinch mode status
+                cv2.putText(annotated, 'VOLUME MODE', (20, 60), FONT, 1.0, (0, 255, 255), 2)
         else:
             # reset histories if hand lost
             self.wrist_history.clear()
             self.pinch_mode = False
             self.pinch_ref_y = None
             self.pinch_vol_ref = None
+            self.pinch_history.clear()
 
         return annotated, event
 

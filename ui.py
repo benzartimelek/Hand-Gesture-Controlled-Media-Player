@@ -152,10 +152,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thread.gesture_event.connect(self.on_gesture)
         self.thread.start()
 
-        # Volume tracking
+        # Enhanced volume tracking
         self.cur_volume = 50
+        self.target_volume = 50  # Target volume for smoothing
         self.player.set_volume(self.cur_volume)
         self._last_vol_ts = time.time()
+
+        # Volume smoothing timer
+        self.volume_smooth_timer = QtCore.QTimer(self)
+        self.volume_smooth_timer.timeout.connect(self._smooth_volume)
+        self.volume_smooth_timer.start(50)  # 20 FPS for smooth volume changes
 
         # Timer to update progress
         self.progress_timer = QtCore.QTimer(self)
@@ -199,8 +205,27 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.pyqtSlot()
     def _on_slider(self):
         self.cur_volume = self.vol_slider.value()
+        self.target_volume = self.cur_volume
         self.player.set_volume(self.cur_volume)
         self.vol_val_lbl.setText(f"{self.cur_volume}%") # Update label
+
+    def _smooth_volume(self):
+        """Smoothly interpolate volume changes for gesture control"""
+        if abs(self.cur_volume - self.target_volume) > 0.5:
+            # Smooth interpolation
+            diff = self.target_volume - self.cur_volume
+            step = max(0.5, abs(diff) * 0.1)  # Adaptive step size
+            if diff > 0:
+                self.cur_volume = min(self.target_volume, self.cur_volume + step)
+            else:
+                self.cur_volume = max(self.target_volume, self.cur_volume - step)
+            
+            # Update UI and player
+            self.player.set_volume(int(self.cur_volume))
+            self.vol_slider.blockSignals(True)
+            self.vol_slider.setValue(int(self.cur_volume))
+            self.vol_slider.blockSignals(False)
+            self.vol_val_lbl.setText(f"{int(self.cur_volume)}%")
 
     def update_progress(self):
         duration = self.player.duration()
@@ -285,16 +310,16 @@ class MainWindow(QtWidgets.QMainWindow):
         elif name == 'volume_delta' and event.data is not None:
             # Convert dy (pixels) to volume change
             dy = float(event.data)
-            dv = max(-3, min(3, (dy / 100.0) * VOL_PER_100PX))  # Cap at ±2 volume units per gesture
+            # Reduce sensitivity - smaller volume changes per pixel
+            volume_per_pixel = VOL_PER_100PX / 100.0 * 0.5   
+            dv = dy * volume_per_pixel
 
-            # Smooth
-            new_vol = self.cur_volume + dv
-            self.cur_volume = max(0, min(100, int(round((1-PINCH_SMOOTHING)*new_vol + PINCH_SMOOTHING*self.cur_volume))))
-            self.player.set_volume(self.cur_volume)
-            self.vol_slider.blockSignals(True)
-            self.vol_slider.setValue(self.cur_volume)
-            self.vol_slider.blockSignals(False)
-            self.vol_val_lbl.setText(f"{self.cur_volume}%")
+            # Cap the maximum change per gesture
+            dv = max(-5, min(5, dv))
+            
+            # Update target volume for smooth interpolation
+            new_target = self.target_volume + dv
+            self.target_volume = max(0, min(100, new_target))
 
     def closeEvent(self, e: QtGui.QCloseEvent):
         self.thread.stop()
