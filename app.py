@@ -1,18 +1,16 @@
 # Hand Gesture Controlled Media Player
 
-import os
-import sys
-import ctypes
+import os, sys, ctypes, platform
 from PyQt5 import QtWidgets
-from ui import MainWindow, FRAME_WIDTH, FRAME_HEIGHT
+from ui import MainWindow
 
+if platform.system() == "Windows":
+    vlc_dll_path = r"C:\Program Files\VideoLAN\VLC\libvlc.dll"
+    if os.path.exists(vlc_dll_path):
+        ctypes.CDLL(vlc_dll_path)
+    else:
+        raise FileNotFoundError("VLC not found at the default path. Install 64-bit VLC or update vlc_dll_path.")
 
-# Manually load libvlc.dll
-vlc_dll_path = r"C:\Program Files\VideoLAN\VLC\libvlc.dll"
-if os.path.exists(vlc_dll_path):
-    ctypes.CDLL(vlc_dll_path)
-else:
-    raise FileNotFoundError("VLC not found, install it and update vlc_dll_path")
 
 
 def main():
